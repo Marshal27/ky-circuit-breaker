@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "target": "ES2018",
+    "module": "ESNext",
+    "declaration": true,
+    "rootDir": "./",
+    "outDir": "./dist",
+    "paths": {
+      "ky": ["node_modules/ky"]
+    },
+    "sourceMap": true,
+    "strict": true,
+  },
+  "include": ["index.ts", "src/**/*"],
+  "exclude": ["node_modules", "**/__tests__/*"]
+}
