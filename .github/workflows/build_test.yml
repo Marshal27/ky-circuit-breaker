@@ -8,19 +8,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v3
       - uses: actions/setup-node@v3
         with:
           node-version: '16'
 
-      - name: lint
+      - name: Install
+        run: |
+          npm install
+
+      - name: Lint
         run: |
           npm run lint
 
       - name: Build
         run: |
-          npm install
           npm run build
 
       - name: Run Tests
         run: |
-          npm run tes
+          npm run test
