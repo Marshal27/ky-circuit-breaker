@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/Marshal27/ky-circuit-breaker/compare/v1.1.0...v1.2.0) (2022-12-13)
+
+
+### Features
+
+* base impl ([0893038](https://github.com/Marshal27/ky-circuit-breaker/commit/0893038c17b9825603a3ac2004fbb61f47a0159b))
+* base impl ([15e420c](https://github.com/Marshal27/ky-circuit-breaker/commit/15e420c536149c2831bab9c01909b513624d404e))
+
 ## [1.1.0](https://github.com/Marshal27/ky-circuit-breaker/compare/v1.0.0...v1.1.0) (2022-12-13)
 
 
