@@ -3,6 +3,11 @@ The premise here is that I wanted to have a circuit breaker pattern that could l
 
 State machine logic was adopted from `albertllousas` work over @ https://github.com/albertllousas/circuit-breaker-typescript and the kudos go to him for the state machine.
 
+If you find this work helpful please consider buying me a coffee.
+<br/>
+<a href="https://www.buymeacoffee.com/marshal27" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
+____________________________
+
 ## Getting Started
 
 ### Why to use it
