@@ -110,5 +110,5 @@ Return string value for NoOp when in a fail fast state.
 
 ```typescript
 
-const circuitBreaker = new CircuitBreaker({maxFailures: 10, resetTimeoutInMillis: 10000});
+const circuitBreaker = new CircuitBreaker({maxFailures: 10, resetTimeoutInMillis: 10000, openCircuitNoOp: true, noOpReturn: '[{"error" : "CircuitBreaker Error!"}]'});
 ````
