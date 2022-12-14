@@ -49,7 +49,6 @@ class CircuitBreakerStateMachine {
     public shouldFailFast = () => !this.currentState.isCallPermitted();
 
     public transition(event: Event): CircuitBreakerStateMachine {
-        // console.log('TRANSITION EVENT: ', event, this.currentState, this.currentState.isCallPermitted())
         if (this.currentState instanceof ClosedCircuit) {
             return this.transitionFromClosed(this.currentState, event);
         } else if (this.currentState instanceof OpenCircuit) {
