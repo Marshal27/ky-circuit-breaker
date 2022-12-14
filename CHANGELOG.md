@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0 (2022-12-14)
+
+
+### Miscellaneous Chores
+
+* release 1.0.0 ([bdddb3b](https://github.com/Marshal27/ky-circuit-breaker/commit/bdddb3b8d68afdad3eebcea37a007dc24d6b3b9a))
+
 ## 1.0.0 (2022-12-13)
 
 
