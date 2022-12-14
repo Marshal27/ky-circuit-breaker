@@ -56,12 +56,13 @@ export class CircuitBreaker {
                     beforeRequest: [
                         ...(options?.hooks?.beforeRequest ? options.hooks.beforeRequest : []),
                         request => {
-                            this.preCall();
                             if (!this.stateMachine.currentState.isCallPermitted()) {
                                 this.noOpCallSucceed = true;
                                 if (this.config.openCircuitNoOp) {
+                                    this.preCall();
                                     return new Response(this.config.noOpReturn, { status: 200 });
                                 } else {
+                                    this.preCall();
                                     return request;
                                 }
                             }

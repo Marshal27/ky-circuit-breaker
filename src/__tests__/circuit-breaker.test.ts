@@ -42,25 +42,21 @@ describe('Circuit breaker', () => {
     circuitBreaker['callFailed'] = mockCircuitBreaker.mockCallFailed;
 
     afterEach(() => {
-        // restore the spy created with spyOn
-        jest.restoreAllMocks();
+        jest.clearAllMocks();
       });
 
     describe('protecting a promise', () => {
         it('should protect all default ky functions', () => {
             expect(protectPromiseSpy).toHaveBeenCalledTimes(6);
         });
-        it('should assign ky hooks to options', async () => {
+        it('should assign ky hooks to options and callSucceed', async () => {
             await mockKyInstance.get({}, {});
 
             expect(mockOptions.hooks.beforeRetry.length).toBeTruthy();
             expect(mockOptions.hooks.beforeRequest.length).toBeTruthy();
             expect(mockOptions.hooks.afterResponse.length).toBeTruthy();
-        });
-        it('should callSucceed if !noOpCallSucceed and Promise.resolve', async () => {
-            // call from line 55
             expect(callSucceedSpy).toBeCalledTimes(1);
-        })
+        });
         it('should set noOpCallSucceed to false if true on Promise.resolve', async () => {
             circuitBreaker['noOpCallSucceed'] = true;
 
@@ -81,24 +77,25 @@ describe('Circuit breaker', () => {
             });
         });
         describe('beforeRequest', () => {
-            it('should preCall', () => {    
+            it('should not call preCall', () => {    
                 mockOptions.hooks.beforeRequest[0]();
     
-                expect(preCallSpy).toBeCalledTimes(1);
+                expect(preCallSpy).toBeCalledTimes(0);
             });
-            it('should set noOpCallSucceed to true when !this.stateMachine.currentState.isCallPermitted()', () => {
+            it('should preCall and set noOpCallSucceed to true when !this.stateMachine.currentState.isCallPermitted()', () => {
                 circuitBreaker['stateMachine'] = {
                     currentState: {
                         isCallPermitted: () => false
                     }
                 } as any;
                 expect(circuitBreaker['noOpCallSucceed']).toBeFalsy();
-    
+                
                 mockOptions.hooks.beforeRequest[0]();
-    
+                
                 expect(circuitBreaker['noOpCallSucceed']).toBeTruthy();
+                expect(preCallSpy).toBeCalledTimes(1);
             });
-            it('should return new response if !this.stateMachine.currentState.isCallPermitted() and config.openCircuitNoOp', async () => {
+            it('should preCall and return new response if !this.stateMachine.currentState.isCallPermitted() and config.openCircuitNoOp', async () => {
                 circuitBreaker['stateMachine'] = {
                     currentState: {
                         isCallPermitted: () => false
@@ -107,11 +104,12 @@ describe('Circuit breaker', () => {
                 const originalResponse = {
                     original: 'I AM ORIGINAL'
                 }
-
+                
                 const result = await mockOptions.hooks.beforeRequest[0](originalResponse).text();
-
+                
                 expect(result).not.toEqual(originalResponse);
                 expect(result).toEqual(mockCircuitBreakerConfig.noOpReturn);
+                expect(preCallSpy).toBeCalledTimes(1);
             });
             it('should return original response if !this.stateMachine.currentState.isCallPermitted() and !config.openCircuitNoOp', () => {
                 mockCircuitBreakerConfig.openCircuitNoOp = false;
@@ -164,9 +162,9 @@ describe('Circuit breaker', () => {
         it('should callFailed when Promise.reject', async () => {
             resolvePromise = false;
 
-            mockKyInstance.get({}, {}).catch(() => {
-                expect(callFailedSpy).toBeCalledTimes(1);
-            });
+            await mockKyInstance.get({}, {}).catch(() => {});
+
+            expect(callFailedSpy).toBeCalledTimes(1);
         });
     });
 });
