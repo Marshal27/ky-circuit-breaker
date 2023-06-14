@@ -4,11 +4,13 @@ import { KyInstance } from 'ky/distribution/types/ky';
 import { Input } from 'ky/distribution/types/options';
 import { Options, ResponsePromise } from 'ky';
 
-interface CircuitBreakerConfig {
+export interface CircuitBreakerConfig {
     maxFailures: number;
-    resetTimeoutInMillis: number;
-    openCircuitNoOp?: boolean;
-    noOpReturn?: string;
+    timeoutLimit: number;
+    hooks?: {
+        beforeRequest?: (() => void)[],
+        afterPromiseComplete?: ((recoveryAttempts: number, recoverySuccessful: boolean, recoveryFailed: boolean) => void)[]
+    };
 }
 
 export enum CircuitStatusFlag {
@@ -17,18 +19,20 @@ export enum CircuitStatusFlag {
     OPEN
 }
 
+enum TransitionFlag {
+    PRE = 'BeforeCallSignal',
+    SUCCESS = 'CallSucceed',
+    FAILURE = 'CallFailed'
+}
 export class CircuitBreaker {
     public circuitStatus: CircuitStatusFlag = CircuitStatusFlag.CLOSED;
     private stateMachine: CircuitBreakerStateMachine;
-    private noOpCallSucceed: boolean = false;
 
     constructor(
         ky: KyInstance,
         readonly config: CircuitBreakerConfig = {
             maxFailures: 5,
-            resetTimeoutInMillis: 10000,
-            openCircuitNoOp: false,
-            noOpReturn: '[{ "error" : "CircuitBreaker open circuit" }]'
+            timeoutLimit: 5000
         },
         readonly now: () => Date = () => new Date()
     ) {
@@ -42,75 +46,96 @@ export class CircuitBreaker {
     }
 
     public protectPromise(lazyPromise: (input: Input, options?: Options) => ResponsePromise): (input: Input, options?: Options) => ResponsePromise {
-        return (input, options) => {
+        const protectedPromise = (input: Input, options?: Options) => {
+            const abortController = new AbortController();
+            const { signal } = abortController;
             options = {
+                signal,
                 ...(options ? options : {}),
                 hooks: {
                     beforeRetry: [
                         ...(options?.hooks?.beforeRetry ? options.hooks.beforeRetry : []),
-                        retry => {
-                            if (retry.retryCount > 1) {
-                                this.callFailed();
-                            }
+                        () => {
+                            this.handleStateTransition(TransitionFlag.FAILURE);
                         }],
                     beforeRequest: [
                         ...(options?.hooks?.beforeRequest ? options.hooks.beforeRequest : []),
-                        request => {
+                        () => {
+                            this.handleStateTransition(TransitionFlag.PRE);
                             if (!this.stateMachine.currentState.isCallPermitted()) {
-                                this.noOpCallSucceed = true;
-                                if (this.config.openCircuitNoOp) {
-                                    this.preCall();
-                                    return new Response(this.config.noOpReturn, { status: 200 });
-                                } else {
-                                    this.preCall();
-                                    return request;
-                                }
+                                abortController.abort();
                             }
                         }],
-                    afterResponse: [
-                        () => {
-                            switch(true) {
-                                case this.stateMachine.currentState instanceof OpenCircuit:
-                                    this.circuitStatus = CircuitStatusFlag.OPEN;
-                                    break;
-                                case this.stateMachine.currentState instanceof HalfOpenCircuit:
-                                    this.circuitStatus = CircuitStatusFlag.HALF;
-                                    break;
-                                case this.stateMachine.currentState instanceof ClosedCircuit:
-                                    this.circuitStatus = CircuitStatusFlag.CLOSED;
-                                    break;
-
-                            }
-                        }
-                    ]
                 }
             };
 
             const result = lazyPromise(input, options);
             result
-                .then(() => {
-                    if (this.noOpCallSucceed) {
-                        /* NOOP - nom nom */
-                        this.noOpCallSucceed = false;
-                    } else {
-                        this.callSucceed();
-                    }
-                })
-                .catch(() => this.callFailed());
+                .then(() => this.handleStateTransition(TransitionFlag.SUCCESS))
+                .catch(() => this.handleStateTransition(TransitionFlag.FAILURE));
             return result;
         };
+        return protectedPromise;
     }
 
     private initStateMachine(config: CircuitBreakerConfig, now: () => Date) {
         const isThresholdReached: (fails: number) => boolean = fails => fails >= config.maxFailures;
         const isTimeoutReached: (open: OpenCircuit) => boolean =
-            open => (open.openedAt.getTime() + config.resetTimeoutInMillis) < now().getTime();
+            open => (open.openedAt.getTime() + config.timeoutLimit) < now().getTime();
         return new CircuitBreakerStateMachine(new ClosedCircuit(), isThresholdReached, isTimeoutReached);
     }
 
-    private preCall = () => { this.stateMachine = this.stateMachine.transition('BeforeCallSignal'); };
+    private handleStateTransition = (flag: TransitionFlag) => {
+        this.stateMachine = this.stateMachine.transition(flag);
+        switch(flag) {
+            case TransitionFlag.PRE: {
+                this.setCircuitStatusFlag();
+                this.invokeAllBeforeRequestHooks();
+                break;
+            }
+            default: {
+                this.setCircuitStatusFlag();
+                this.invokeAllAfterPromiseCompleteHooks();
+                break;
+            }
+        }
+    }
 
-    private callSucceed = () => { this.stateMachine = this.stateMachine.transition('CallSucceed'); };
+    private setCircuitStatusFlag = () => {
+        switch (true) {
+            case this.stateMachine.currentState instanceof OpenCircuit:
+                this.circuitStatus = CircuitStatusFlag.OPEN;
+                break;
+            case this.stateMachine.currentState instanceof HalfOpenCircuit:
+                this.circuitStatus = CircuitStatusFlag.HALF;
+                break;
+            case this.stateMachine.currentState instanceof ClosedCircuit:
+                this.circuitStatus = CircuitStatusFlag.CLOSED;
+                break;
+        }
+    }
 
-    private callFailed = () => { this.stateMachine = this.stateMachine.transition('CallFailed'); };
+    private invokeAllBeforeRequestHooks = () => {
+        const funcArray = this.config?.hooks?.beforeRequest;
+        if (funcArray?.length) {
+            for (const func of funcArray) {
+                func();
+            }
+        }
+    }
+
+    private invokeAllAfterPromiseCompleteHooks = () => {
+        const recoverySuccessful = this.stateMachine.currentState.recoverySuccessful ?? false;
+        const recoveryAttempts = this.stateMachine.currentState.recoveryAttempts ?? 0;
+        const recoveryFailed = this.stateMachine.currentState.recoveryFailed ?? false;
+        const funcArray = this.config?.hooks?.afterPromiseComplete;
+        if (funcArray?.length) {
+            for (const func of funcArray) {
+                func(recoveryAttempts, recoverySuccessful, recoveryFailed);
+            }
+        }
+        if (this.stateMachine.currentState instanceof OpenCircuit && this.stateMachine.currentState.recoveryFailed) {
+            this.stateMachine.currentState.recoveryFailedNotified();
+        }
+    }
 }
