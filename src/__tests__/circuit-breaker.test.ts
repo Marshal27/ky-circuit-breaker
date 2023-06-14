@@ -1,8 +1,13 @@
 import 'isomorphic-fetch';
-import { CircuitBreaker, CircuitStatusFlag } from '../circuit-breaker';
-import { ClosedCircuit, HalfOpenCircuit, OpenCircuit } from '../state-machine/states';
+import { CircuitBreaker, CircuitBreakerConfig } from '../circuit-breaker';
+import { KyResponse, Options } from 'ky';
+import { Input } from 'ky/distribution/types/options';
 
 describe('Circuit breaker', () => {
+    const promiseResolve = new Promise(resolve => resolve(''));
+    const promiseReject = new Promise((resolve, reject) => reject(''));
+    const mockPromiseResolve = (input: Input, options: Options | undefined) => promiseResolve as any;
+    const mockPromiseReject = (input: Input, options: Options | undefined) => promiseReject as any;
     const wait = (millis: number) => new Promise(resolve => setTimeout(resolve, millis));
     let mockOptions: any = {};
     let resolvePromise = true;
@@ -13,33 +18,27 @@ describe('Circuit breaker', () => {
         },
     };
     const mockCircuitBreaker = {
-        mockPreCall: () => {},
-        mockCallSucceed: () => {},
-        mockCallFailed: () => {}
+        handleStateTransition: (flag: any) => {}
     }
-    const mockCircuitBreakerConfig = {
+    const mockCircuitBreakerConfig: CircuitBreakerConfig = {
         maxFailures: 1, 
-        resetTimeoutInMillis: 10, 
-        openCircuitNoOp: true, 
-        noOpReturn: '[{ "error" : "CircuitBreaker open circuit" }]'
+        timeoutLimit: 10,
+        hooks: {
+            beforeRequest: [() => {}],
+            afterPromiseComplete: [() => {}]
+        } 
     }
 
     let circuitBreaker: CircuitBreaker;
     let protectPromiseSpy: any;
-    let preCallSpy: any;
-    let callSucceedSpy: any;
-    let callFailedSpy: any;
+    let handleStateTransitionSpy: any;
 
     protectPromiseSpy = jest.spyOn(CircuitBreaker.prototype, 'protectPromise');
     circuitBreaker = new CircuitBreaker(mockKyInstance as any, mockCircuitBreakerConfig);
     
-    preCallSpy = jest.spyOn(mockCircuitBreaker, 'mockPreCall');
-    callSucceedSpy = jest.spyOn(mockCircuitBreaker, 'mockCallSucceed');
-    callFailedSpy = jest.spyOn(mockCircuitBreaker, 'mockCallFailed');
+    handleStateTransitionSpy = jest.spyOn(mockCircuitBreaker, 'handleStateTransition');
 
-    circuitBreaker['preCall'] = mockCircuitBreaker.mockPreCall;
-    circuitBreaker['callSucceed'] = mockCircuitBreaker.mockCallSucceed;
-    circuitBreaker['callFailed'] = mockCircuitBreaker.mockCallFailed;
+    circuitBreaker['handleStateTransition'] = mockCircuitBreaker.handleStateTransition;
 
     afterEach(() => {
         jest.clearAllMocks();
@@ -54,117 +53,56 @@ describe('Circuit breaker', () => {
 
             expect(mockOptions.hooks.beforeRetry.length).toBeTruthy();
             expect(mockOptions.hooks.beforeRequest.length).toBeTruthy();
-            expect(mockOptions.hooks.afterResponse.length).toBeTruthy();
-            expect(callSucceedSpy).toBeCalledTimes(1);
         });
-        it('should set noOpCallSucceed to false if true on Promise.resolve', async () => {
-            circuitBreaker['noOpCallSucceed'] = true;
-
+        it('should assign signal', async () => {
             await mockKyInstance.get({}, {});
 
-            expect(circuitBreaker['noOpCallSucceed']).toBeFalsy();
+            expect(mockOptions.signal).toBeTruthy();
+        });
+        it('should return instance of Promise<KyResponse>', async () => {
+            const result = circuitBreaker.protectPromise(mockPromiseResolve)('test');
+
+            expect(result).toBeInstanceOf(Promise<KyResponse>);
+        });
+        it('should call handleStateTransition on promise resolve', async () => {
+            await circuitBreaker.protectPromise(mockPromiseResolve)('test');
+    
+            expect(handleStateTransitionSpy).toBeCalledTimes(1);
+            expect(handleStateTransitionSpy).toBeCalledWith('CallSucceed')
+        });
+        it('should call handleStateTransition on promise reject', async () => {
+            await circuitBreaker.protectPromise(mockPromiseReject)('test').catch(() => {});
+    
+            expect(handleStateTransitionSpy).toBeCalledTimes(1);
+            expect(handleStateTransitionSpy).toBeCalledWith('CallFailed')
         });
         describe('beforeRetry', () => {
-            it('should NOT callFailed when retry.retryCount === 1', () => {
-                mockOptions.hooks.beforeRetry[0]({ retryCount: 1});
+            it('should call handleStateTransition', () => {
+                mockOptions.hooks.beforeRetry[0]();
 
-                expect(callFailedSpy).toBeCalledTimes(0);
-            });
-            it('should callFailed when retry.retryCount > 1', () => {
-                mockOptions.hooks.beforeRetry[0]({ retryCount: 2});
-
-                expect(callFailedSpy).toBeCalledTimes(1);
+                expect(handleStateTransitionSpy).toBeCalledTimes(1);
+                expect(handleStateTransitionSpy).toBeCalledWith('CallFailed');
             });
         });
         describe('beforeRequest', () => {
-            it('should not call preCall', () => {    
+            it('should call handleStateTransition', () => {    
                 mockOptions.hooks.beforeRequest[0]();
     
-                expect(preCallSpy).toBeCalledTimes(0);
+                expect(handleStateTransitionSpy).toBeCalledTimes(1);
+                expect(handleStateTransitionSpy).toBeCalledWith('BeforeCallSignal');
             });
-            it('should preCall and set noOpCallSucceed to true when !this.stateMachine.currentState.isCallPermitted()', () => {
+            it('should abort when !this.stateMachine.currentState.isCallPermitted()', () => {
                 circuitBreaker['stateMachine'] = {
                     currentState: {
                         isCallPermitted: () => false
                     }
                 } as any;
-                expect(circuitBreaker['noOpCallSucceed']).toBeFalsy();
-                
+                const spy = jest.spyOn(AbortController.prototype, 'abort');
+    
                 mockOptions.hooks.beforeRequest[0]();
-                
-                expect(circuitBreaker['noOpCallSucceed']).toBeTruthy();
-                expect(preCallSpy).toBeCalledTimes(1);
+
+                expect(spy).toBeCalledTimes(1);
             });
-            it('should preCall and return new response if !this.stateMachine.currentState.isCallPermitted() and config.openCircuitNoOp', async () => {
-                circuitBreaker['stateMachine'] = {
-                    currentState: {
-                        isCallPermitted: () => false
-                    }
-                } as any;
-                const originalResponse = {
-                    original: 'I AM ORIGINAL'
-                }
-                
-                const result = await mockOptions.hooks.beforeRequest[0](originalResponse).text();
-                
-                expect(result).not.toEqual(originalResponse);
-                expect(result).toEqual(mockCircuitBreakerConfig.noOpReturn);
-                expect(preCallSpy).toBeCalledTimes(1);
-            });
-            it('should return original response if !this.stateMachine.currentState.isCallPermitted() and !config.openCircuitNoOp', () => {
-                mockCircuitBreakerConfig.openCircuitNoOp = false;
-                circuitBreaker['stateMachine'] = {
-                    currentState: {
-                        isCallPermitted: () => false
-                    }
-                } as any;
-                const originalResponse = {
-                    original: 'I AM ORIGINAL'
-                }
-
-                const result = mockOptions.hooks.beforeRequest[0](originalResponse);
-
-                expect(result).toEqual(originalResponse);
-            });
-        });
-        describe('afterResponse', () => {
-            it('should set circuitStatus to CircuitStatusFlag.OPEN if stateMachine.currentState instanceof OpenCircuit', () => {
-                circuitBreaker['stateMachine'] = {
-                    currentState: new OpenCircuit(new Date())
-                } as any;
-                expect(circuitBreaker.circuitStatus).toEqual(CircuitStatusFlag.CLOSED);
-
-                mockOptions.hooks.afterResponse[0]();
-
-                expect(circuitBreaker.circuitStatus).toEqual(CircuitStatusFlag.OPEN);
-            });
-            it('should set circuitStatus to CircuitStatusFlag.HALF if stateMachine.currentState instanceof HalfOpenCircuit', () => {
-                circuitBreaker['stateMachine'] = {
-                    currentState: new HalfOpenCircuit()
-                } as any;
-                expect(circuitBreaker.circuitStatus).toEqual(CircuitStatusFlag.OPEN);
-
-                mockOptions.hooks.afterResponse[0]();
-
-                expect(circuitBreaker.circuitStatus).toEqual(CircuitStatusFlag.HALF);
-            });
-            it('should set circuitStatus to CircuitStatusFlag.CLOSED if stateMachine.currentState instanceof ClosedCircuit', () => {
-                circuitBreaker['stateMachine'] = {
-                    currentState: new ClosedCircuit()
-                } as any;
-                expect(circuitBreaker.circuitStatus).toEqual(CircuitStatusFlag.HALF);
-
-                mockOptions.hooks.afterResponse[0]();
-                
-                expect(circuitBreaker.circuitStatus).toEqual(CircuitStatusFlag.CLOSED);
-            });
-        });
-        it('should callFailed when Promise.reject', async () => {
-            resolvePromise = false;
-
-            await mockKyInstance.get({}, {}).catch(() => {});
-
-            expect(callFailedSpy).toBeCalledTimes(1);
         });
     });
 });
