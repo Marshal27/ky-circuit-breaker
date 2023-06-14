@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/Marshal27/ky-circuit-breaker/compare/v1.0.0...v1.1.0) (2023-06-14)
+
+
+### Features
+
+* Abort Controller ([b4eebb9](https://github.com/Marshal27/ky-circuit-breaker/commit/b4eebb93d077316b41c691204a75e0334d5962c5))
+
 ## 1.0.0 (2022-12-14)
 
 
